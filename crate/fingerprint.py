@@ -85,6 +85,13 @@ def identify(path: str | Path, *, api_key: str | None = None,
         ident.error = f"AcoustID lookup failed: {e}"
         return ident
 
+    # pyacoustid returns the API error payload rather than raising, so an
+    # invalid key / rate-limit shows up here as status=error, not an exception.
+    if isinstance(results, dict) and results.get("status") == "error":
+        msg = (results.get("error") or {}).get("message", "unknown error")
+        ident.error = f"AcoustID: {msg}"
+        return ident
+
     for res in results.get("results", [])[:max_results]:
         score = res.get("score", 0.0)
         recordings = res.get("recordings") or [{}]

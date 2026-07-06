@@ -12,16 +12,22 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 from .config import db_path
-from .models import Track
+from .models import Track, Volume
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Columns that map 1:1 to Track fields, in a stable order for INSERTs.
 _COLUMNS = [
     "host", "path", "volume", "size", "mtime", "ext", "content_hash",
+    "vol_id", "relpath", "vol_label",
     "title", "artist", "album", "albumartist", "track_no", "disc_no",
     "year", "genre", "duration", "bitrate", "samplerate", "channels",
     "fingerprint", "acoustid", "mb_recording_id", "tags_json",
+]
+
+_VOLUME_COLUMNS = [
+    "vol_id", "label", "fs_uuid", "capacity_bytes", "free_bytes",
+    "last_host", "last_mount", "last_scanned", "last_seen", "created",
 ]
 
 _SCHEMA = f"""
@@ -39,6 +45,9 @@ CREATE TABLE IF NOT EXISTS files (
     mtime REAL,
     ext TEXT,
     content_hash TEXT,
+    vol_id TEXT,
+    relpath TEXT,
+    vol_label TEXT,
     title TEXT,
     artist TEXT,
     album TEXT,
@@ -67,12 +76,51 @@ CREATE INDEX IF NOT EXISTS idx_files_album  ON files(album COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_files_hash   ON files(content_hash);
 CREATE INDEX IF NOT EXISTS idx_files_acoustid ON files(acoustid);
 CREATE INDEX IF NOT EXISTS idx_files_host   ON files(host);
+
+CREATE TABLE IF NOT EXISTS volumes (
+    id INTEGER PRIMARY KEY,
+    vol_id TEXT NOT NULL UNIQUE,
+    label TEXT,
+    fs_uuid TEXT,
+    capacity_bytes INTEGER,
+    free_bytes INTEGER,
+    last_host TEXT,
+    last_mount TEXT,
+    last_scanned REAL,
+    last_seen REAL,
+    created REAL
+);
+"""
+
+# Additive migrations from older schemas: add columns that CREATE TABLE
+# IF NOT EXISTS won't add to a pre-existing table.
+_MIGRATIONS = {
+    "vol_id": "ALTER TABLE files ADD COLUMN vol_id TEXT",
+    "relpath": "ALTER TABLE files ADD COLUMN relpath TEXT",
+    "vol_label": "ALTER TABLE files ADD COLUMN vol_label TEXT",
+}
+
+# Indexes referencing columns that may be added by migration — created only
+# after the columns are guaranteed to exist.
+_POST_MIGRATE = """
+CREATE INDEX IF NOT EXISTS idx_files_vol ON files(vol_id);
+
+-- The real identity of a file on a removable drive: mount-point independent.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_files_vol_relpath
+    ON files(vol_id, relpath) WHERE vol_id IS NOT NULL;
 """
 
 
 def _search_blob(t: Track) -> str:
-    parts = [t.artist, t.albumartist, t.album, t.title, t.path]
+    parts = [t.artist, t.albumartist, t.album, t.title, t.vol_label, t.relpath, t.path]
     return " ".join(p for p in parts if p).lower()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(files)")}
+    for col, ddl in _MIGRATIONS.items():
+        if col not in have:
+            conn.execute(ddl)
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -83,8 +131,10 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
+    conn.executescript(_POST_MIGRATE)
     conn.execute(
-        "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
@@ -92,18 +142,30 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
 
 
 def upsert(conn: sqlite3.Connection, track: Track) -> None:
-    """Insert or refresh a track by (host, path). Preserves first_seen."""
+    """Insert or refresh a track. Preserves first_seen.
+
+    Files on a registered volume are keyed by (vol_id, relpath) so the same
+    physical file is one row no matter which host/mount it was seen on;
+    host-internal files are keyed by (host, path) as before.
+    """
     row = track.as_row()
     row["search_blob"] = _search_blob(track)
     cols = _COLUMNS + ["search_blob"]
     placeholders = ", ".join(f":{c}" for c in cols)
     collist = ", ".join(cols)
-    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in ("host", "path"))
+    if track.vol_id:
+        # Must repeat the partial index's WHERE clause to target it.
+        conflict = "(vol_id, relpath) WHERE vol_id IS NOT NULL"
+        frozen = ("vol_id", "relpath")
+    else:
+        conflict = "(host, path)"
+        frozen = ("host", "path")
+    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in frozen)
     conn.execute(
         f"""
         INSERT INTO files ({collist}, last_seen)
         VALUES ({placeholders}, unixepoch())
-        ON CONFLICT(host, path) DO UPDATE SET
+        ON CONFLICT{conflict} DO UPDATE SET
             {updates}, last_seen=unixepoch()
         """,
         row,
@@ -232,21 +294,29 @@ def merge(conn: sqlite3.Connection, other_path: Path | str) -> dict:
 
     conn.execute("ATTACH DATABASE ? AS src", (str(other),))
     try:
+        # Route each source row through the volume-aware upsert so files on a
+        # registered drive dedup by (vol_id, relpath) while host-internal files
+        # dedup by (host, path). A single INSERT..ON CONFLICT can't target both.
         source_total = conn.execute("SELECT COUNT(*) n FROM src.files").fetchone()["n"]
-        # Which (host,path) pairs already exist here — everything else is new.
-        added = conn.execute(
-            "SELECT COUNT(*) n FROM src.files s "
-            "WHERE NOT EXISTS (SELECT 1 FROM files f "
-            "WHERE f.host=s.host AND f.path=s.path)"
-        ).fetchone()["n"]
-        conn.execute(
-            f"""
-            INSERT INTO files ({collist}, first_seen, last_seen)
-            SELECT {collist}, first_seen, last_seen FROM src.files
-            WHERE true
-            ON CONFLICT(host, path) DO UPDATE SET {updates}, last_seen=unixepoch()
-            """
-        )
+        added = 0
+        for srow in conn.execute("SELECT * FROM src.files").fetchall():
+            track = _row_to_track(srow)
+            if track.vol_id:
+                exists = conn.execute(
+                    "SELECT 1 FROM files WHERE vol_id=? AND relpath=?",
+                    (track.vol_id, track.relpath),
+                ).fetchone()
+            else:
+                exists = conn.execute(
+                    "SELECT 1 FROM files WHERE host=? AND path=?",
+                    (track.host, track.path),
+                ).fetchone()
+            if not exists:
+                added += 1
+            upsert(conn, track)
+        # Bring over any volume records the source knows about.
+        for vrow in conn.execute("SELECT * FROM src.volumes").fetchall():
+            upsert_volume(conn, _row_to_volume(vrow))
         conn.commit()
     finally:
         conn.execute("DETACH DATABASE src")
@@ -257,11 +327,113 @@ def merge(conn: sqlite3.Connection, other_path: Path | str) -> dict:
     }
 
 
+# ---- volumes (registered removable drives) --------------------------------
+
+def _row_to_volume(row: sqlite3.Row) -> Volume:
+    data = {k: row[k] for k in row.keys() if k in Volume.__dataclass_fields__}
+    return Volume(**data)
+
+
+def upsert_volume(conn: sqlite3.Connection, vol: Volume) -> None:
+    """Insert or refresh a volume record by its stable vol_id."""
+    row = vol.as_row()
+    cols = _VOLUME_COLUMNS
+    placeholders = ", ".join(f":{c}" for c in cols)
+    collist = ", ".join(cols)
+    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "vol_id")
+    conn.execute(
+        f"""
+        INSERT INTO volumes ({collist}) VALUES ({placeholders})
+        ON CONFLICT(vol_id) DO UPDATE SET {updates}
+        """,
+        row,
+    )
+    conn.commit()
+
+
+def list_volumes(conn: sqlite3.Connection) -> list[Volume]:
+    rows = conn.execute("SELECT * FROM volumes ORDER BY label COLLATE NOCASE").fetchall()
+    return [_row_to_volume(r) for r in rows]
+
+
+def get_volume(conn: sqlite3.Connection, vol_id: str) -> Volume | None:
+    row = conn.execute("SELECT * FROM volumes WHERE vol_id=?", (vol_id,)).fetchone()
+    return _row_to_volume(row) if row else None
+
+
+def volume_usage(conn: sqlite3.Connection, vol_id: str) -> dict:
+    """Indexed file count + bytes recorded for one volume."""
+    r = conn.execute(
+        "SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM files WHERE vol_id=?",
+        (vol_id,),
+    ).fetchone()
+    return {"files": r["n"], "bytes": r["b"]}
+
+
+# ---- backup coverage ------------------------------------------------------
+
+def _location_expr() -> str:
+    """SQL for a file's location label: drive label if on a volume, else host."""
+    return "COALESCE(vol_label, host)"
+
+
+def at_risk(conn: sqlite3.Connection, *, limit: int = 500) -> list[Track]:
+    """Files whose content exists in exactly ONE location — no backup copy.
+
+    Copies are matched by content_hash across all hosts and volumes; a file is
+    'at risk' if it (and any byte-identical twin) all live in a single location.
+    """
+    loc = _location_expr()
+    rows = conn.execute(
+        f"""
+        SELECT * FROM files WHERE content_hash IN (
+            SELECT content_hash FROM files
+            WHERE content_hash IS NOT NULL
+            GROUP BY content_hash
+            HAVING COUNT(DISTINCT {loc}) = 1
+        )
+        ORDER BY {loc}, path
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [_row_to_track(r) for r in rows]
+
+
+def coverage(conn: sqlite3.Connection) -> dict:
+    """Backup-coverage summary across every known location.
+
+    'protected' = content that exists in ≥2 distinct locations; 'at_risk' =
+    content in exactly one. Counts are of distinct content hashes.
+    """
+    loc = _location_expr()
+    rows = conn.execute(
+        f"""
+        SELECT nloc, COUNT(*) n FROM (
+            SELECT content_hash, COUNT(DISTINCT {loc}) nloc
+            FROM files WHERE content_hash IS NOT NULL
+            GROUP BY content_hash
+        ) GROUP BY nloc ORDER BY nloc
+        """
+    ).fetchall()
+    by_copies = {r["nloc"]: r["n"] for r in rows}
+    at_risk_n = by_copies.get(1, 0)
+    protected_n = sum(n for k, n in by_copies.items() if k >= 2)
+    return {
+        "distinct_content": sum(by_copies.values()),
+        "at_risk": at_risk_n,
+        "protected": protected_n,
+        "by_copies": by_copies,
+    }
+
+
 def stats(conn: sqlite3.Connection) -> dict:
+    loc = _location_expr()
     cur = conn.execute("SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM files")
     total = cur.fetchone()
     per_host = conn.execute(
-        "SELECT host, COUNT(*) n, COALESCE(SUM(size),0) b FROM files GROUP BY host"
+        f"SELECT {loc} host, COUNT(*) n, COALESCE(SUM(size),0) b "
+        f"FROM files GROUP BY {loc} ORDER BY b DESC"
     ).fetchall()
     untagged_n = conn.execute(
         "SELECT COUNT(*) n FROM files WHERE (artist IS NULL OR artist='') "

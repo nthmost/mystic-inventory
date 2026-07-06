@@ -23,6 +23,13 @@ class Track:
     ext: str | None = None
     content_hash: str | None = None
 
+    # removable-volume identity (set for files on a registered external drive).
+    # When vol_id is set, the real identity is (vol_id, relpath) — mount-point
+    # and host independent — while host/path record where it was last seen.
+    vol_id: str | None = None
+    relpath: str | None = None
+    vol_label: str | None = None
+
     # metadata (from tags)
     title: str | None = None
     artist: str | None = None
@@ -65,3 +72,35 @@ class Track:
     @property
     def is_untagged(self) -> bool:
         return not (self.artist or self.title)
+
+    @property
+    def location(self) -> str:
+        """Where the bytes live: a drive label if on a volume, else the host."""
+        return self.vol_label or self.host
+
+
+@dataclass
+class Volume:
+    """A registered storage volume — typically a roaming external drive.
+
+    Identity is `vol_id` (a UUID crate wrote to a marker file at the drive root),
+    which survives unplugging, remounting, and moving between machines. The
+    last_* fields record where/when it was most recently seen and scanned.
+    """
+
+    vol_id: str
+    label: str
+    fs_uuid: str | None = None
+    capacity_bytes: int | None = None
+    free_bytes: int | None = None
+    last_host: str | None = None
+    last_mount: str | None = None
+    last_scanned: float | None = None
+    last_seen: float | None = None
+    created: float | None = None
+    id: int | None = None
+
+    def as_row(self) -> dict[str, Any]:
+        d = asdict(self)
+        d.pop("id", None)
+        return d

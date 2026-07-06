@@ -66,6 +66,43 @@ Note: `scan` needs only Python + `mutagen` (no network, no fpcalc), so deploying
 crate to a host just to index it is lightweight; `fpcalc`/AcoustID are only
 needed where you run `identify`.
 
+## External drives (offline-aware)
+
+crate treats a roaming external drive as a first-class **volume** with a stable
+identity, so the index keeps answering *"what's on BigDrive?"* and *"which drive
+has X?"* even while the drive is unplugged and sitting in a drawer.
+
+Identity is a marker file (`.crate-volume.json`, a generated UUID + label) that
+crate writes once to the drive root — so the same drive is recognized no matter
+which machine it's plugged into or where it mounts. Files on a volume are indexed
+by drive-relative path, not absolute path.
+
+```sh
+crate volume register /Volumes/BigDrive --label BigDrive   # writes the marker (one time)
+crate volume scan /Volumes/BigDrive                        # index it (paths stored drive-relative)
+crate volume status                                        # ● online / ○ offline, usage, capacity, last seen
+```
+
+Once scanned, everything works whether or not the drive is connected:
+
+```sh
+crate find boards of canada     # results show [BigDrive] even when it's unplugged
+crate stats                     # drives appear as locations alongside hosts
+```
+
+### Backup coverage
+
+With content hashing on (the default), crate knows which files exist in more than
+one location — across hosts *and* drives:
+
+```sh
+crate coverage    # % protected (≥2 copies) vs at-risk (single copy)
+crate at-risk     # list files that live in exactly ONE place — what you'd lose
+```
+
+If crate can't discover your drives (nonstandard mount point), set
+`CRATE_MOUNT_ROOTS=/path/one:/path/two`.
+
 ## Configuration
 
 | What | How |
@@ -82,6 +119,9 @@ fingerprint (a stable content id) but can't look up the title.
 
 - [x] Core library + CLI: scan, find, identify, untagged, dupes, stats
 - [x] Index merge across hosts (`crate merge other.db`)
+- [x] Removable volumes: offline-aware inventory, capacity/health (`crate volume …`)
+- [x] Backup coverage: `crate coverage`, `crate at-risk`
+- [ ] Move/copy planning between drives (consolidate, fill, dedup) — file ops, opt-in
 - [ ] TUI file browser (Textual): navigate, preview, batch-identify, retag
 - [ ] Write-back retagging (apply an identified match to the file's tags)
 - [ ] `crate pull <host>` — one-shot remote scan + fetch + merge

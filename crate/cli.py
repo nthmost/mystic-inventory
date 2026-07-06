@@ -12,7 +12,7 @@ from pathlib import Path
 
 import click
 
-from . import __version__, db
+from . import __version__, db, volumes
 from .config import acoustid_key, db_path, hostname
 from .fingerprint import fpcalc_available, identify as fp_identify
 from .scan import ScanResult, scan as run_scan
@@ -35,6 +35,18 @@ def _human_dur(sec: float | None) -> str:
         return "—"
     m, s = divmod(int(sec), 60)
     return f"{m}:{s:02d}"
+
+
+def _ago(ts: float | None) -> str:
+    if not ts:
+        return "never"
+    delta = time.time() - ts
+    if delta < 90:
+        return "just now"
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if delta >= size:
+            return f"{int(delta // size)}{unit} ago"
+    return "just now"
 
 
 @click.group(help="Inventory and browse playable music across hosts and drives.")
@@ -93,7 +105,7 @@ def find(query: tuple[str, ...], host: str | None, limit: int, paths: bool) -> N
             click.echo(t.path)
         return
     for t in results:
-        loc = click.style(f"[{t.host}]", fg="cyan")
+        loc = click.style(f"[{t.location}]", fg="cyan")
         dur = click.style(_human_dur(t.duration), fg="black")
         tag = "" if not t.is_untagged else click.style(" (untagged)", fg="yellow")
         click.echo(f"{loc} {t.display}{tag}  {dur}")
@@ -159,7 +171,7 @@ def untagged(host: str | None, limit: int) -> None:
     rows = db.untagged(conn, host=host, limit=limit)
     conn.close()
     for t in rows:
-        click.echo(f"[{t.host}] {t.path}")
+        click.echo(f"[{t.location}] {t.path}")
     click.echo(err=True, message=f"\n{len(rows)} untagged file(s).")
 
 
@@ -211,6 +223,120 @@ def merge(other: Path) -> None:
         conn.close()
     click.echo(f"Merged {other}: {r['added']} new, {r['updated']} updated "
                f"({r['total_source']} rows in source).")
+
+
+@cli.group()
+def volume() -> None:
+    """Manage removable drives (offline-aware inventory)."""
+
+
+@volume.command("register")
+@click.argument("mount", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--label", default=None, help="Human name for the drive (default: mount name).")
+def volume_register(mount: Path, label: str | None) -> None:
+    """Mark a mounted drive as a crate volume (writes a small marker file)."""
+    conn = db.connect()
+    try:
+        vol = volumes.register(conn, mount, label or mount.name)
+    finally:
+        conn.close()
+    cap = f"{vol.capacity_bytes/1e9:.0f} GB" if vol.capacity_bytes else "?"
+    click.echo(f"Registered '{vol.label}' ({cap}) — id {vol.vol_id}")
+    click.echo(f"Marker written to {mount}/{volumes.MARKER}")
+
+
+@volume.command("scan")
+@click.argument("mount", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--no-hash", is_flag=True, help="Skip content hashing (faster, no dedupe/coverage).")
+@click.option("-q", "--quiet", is_flag=True)
+def volume_scan(mount: Path, no_hash: bool, quiet: bool) -> None:
+    """Index every audio file on a registered drive (paths stored drive-relative)."""
+    conn = db.connect()
+    last = [0.0]
+
+    def progress(path: Path, res: ScanResult) -> None:
+        if quiet:
+            return
+        now = time.time()
+        if now - last[0] > 0.1:
+            last[0] = now
+            click.echo(f"\r  {res.scanned:>6} scanned, {res.added:>6} indexed  "
+                       f"{str(path)[-46:]:<46}", nl=False, err=True)
+
+    try:
+        vol, res = volumes.scan_volume(conn, mount, do_hash=not no_hash, progress=progress)
+    except ValueError as e:
+        click.echo(f"\n{e}", err=True)
+        conn.close()
+        sys.exit(2)
+    conn.close()
+    if not quiet:
+        click.echo("\r" + " " * 80 + "\r", nl=False, err=True)
+    click.echo(f"Indexed {res.added} files on '{vol.label}' "
+               f"({res.scanned} seen, {res.skipped_nonaudio} non-audio, {res.errors} errors).")
+
+
+@volume.command("status")
+def volume_status() -> None:
+    """List registered drives: online/offline, usage, capacity, last seen."""
+    conn = db.connect()
+    rows = volumes.status(conn)
+    conn.close()
+    if not rows:
+        click.echo("No registered volumes yet. `crate volume register <mount>`.")
+        return
+    for s in rows:
+        v = s.volume
+        dot = click.style("●", fg="green") if s.online else click.style("○", fg="bright_black")
+        state = click.style("online", fg="green") if s.online else click.style("offline", fg="yellow")
+        cap = f"{v.capacity_bytes/1e9:.0f}GB" if v.capacity_bytes else "?"
+        free = f"{v.free_bytes/1e9:.0f}GB free" if v.free_bytes else ""
+        pct = ""
+        if v.capacity_bytes and v.free_bytes is not None:
+            used = 100 * (v.capacity_bytes - v.free_bytes) / v.capacity_bytes
+            pct = click.style(f" {used:.0f}% full", fg="red" if used > 90 else "black")
+        click.echo(f"{dot} {click.style(v.label, bold=True):<24} {state}  "
+                   f"{s.files} files, {_human_size(s.bytes)} indexed  [{cap} {free}{pct}]")
+        seen = _ago(v.last_seen)
+        scanned = _ago(v.last_scanned)
+        where = f" at {s.mount}" if s.online else (f" last at {v.last_host}:{v.last_mount}" if v.last_mount else "")
+        click.echo(click.style(f"    seen {seen}, scanned {scanned}{where}", fg="bright_black"))
+
+
+@cli.command()
+def coverage() -> None:
+    """Backup coverage: what's protected (≥2 locations) vs at-risk (1 location)."""
+    conn = db.connect()
+    c = db.coverage(conn)
+    conn.close()
+    total = c["distinct_content"]
+    if not total:
+        click.echo("No content hashes yet — scan with hashing enabled.")
+        return
+    pct = 100 * c["protected"] / total if total else 0
+    click.echo(f"Distinct content: {total}")
+    click.echo(click.style(f"  protected (≥2 copies): {c['protected']} ({pct:.0f}%)", fg="green"))
+    click.echo(click.style(f"  at risk   (1 copy):    {c['at_risk']}", fg="yellow"))
+    dist = ", ".join(f"{k}×: {v}" for k, v in sorted(c["by_copies"].items()))
+    click.echo(f"  copies distribution: {dist}")
+
+
+@cli.command("at-risk")
+@click.option("-l", "--limit", default=100, show_default=True)
+@click.option("--paths", is_flag=True, help="Print paths only.")
+def at_risk(limit: int, paths: bool) -> None:
+    """List files that exist in only ONE location (no backup copy)."""
+    conn = db.connect()
+    rows = db.at_risk(conn, limit=limit)
+    conn.close()
+    if paths:
+        for t in rows:
+            click.echo(t.path)
+        return
+    for t in rows:
+        click.echo(f"[{click.style(t.location, fg='cyan')}] {t.display}")
+        click.echo(click.style(f"      {t.path}", fg="bright_black"))
+    click.echo(err=True, message=f"\n{len(rows)} at-risk file(s) shown.")
 
 
 @cli.command(name="where")

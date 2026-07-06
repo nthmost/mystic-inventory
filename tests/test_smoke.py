@@ -60,6 +60,40 @@ class TestIndex(unittest.TestCase):
         self.assertEqual(len(u), 1)
         self.assertTrue(u[0].is_untagged)
 
+    def test_merge_combines_hosts(self):
+        # styx-side index (self.conn) has one styx track.
+        db.upsert(self.conn, self._track(
+            host="styx", path="/music/a.flac", artist="Mouse on Mars", title="Yippie"))
+        self.conn.commit()
+
+        # A separate beyla-side index with its own tracks + one overlapping path.
+        other = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        other.close()
+        oconn = db.connect(Path(other.name))
+        db.upsert(oconn, self._track(
+            host="beyla", path="/media/x.mp3", artist="Portishead", title="Roads"))
+        db.upsert(oconn, self._track(
+            host="styx", path="/music/a.flac", artist="Mouse on Mars", title="Yippie (remaster)"))
+        oconn.commit()
+        oconn.close()
+
+        r = db.merge(self.conn, other.name)
+        self.assertEqual(r["total_source"], 2)
+        self.assertEqual(r["added"], 1)      # the beyla row is new
+        self.assertEqual(r["updated"], 1)    # the styx row already existed
+
+        # Both hosts now queryable from one index; overlap was refreshed.
+        self.assertEqual(len(db.search(self.conn, "portishead")), 1)
+        self.assertEqual(db.search(self.conn, "mouse on mars")[0].title, "Yippie (remaster)")
+        hosts = {t.host for t in db.search(self.conn, "", limit=50)}
+        self.assertEqual(hosts, {"styx", "beyla"})
+
+        for ext in ("", "-wal", "-shm"):
+            try:
+                os.unlink(other.name + ext)
+            except OSError:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

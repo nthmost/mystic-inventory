@@ -197,6 +197,22 @@ def stats() -> None:
             click.echo(f"  {e['ext'] or '(none)':<8} {e['n']:>7}")
 
 
+@cli.command()
+@click.argument("other", type=click.Path(exists=True, path_type=Path))
+def merge(other: Path) -> None:
+    """Merge another host's crate.db into this index (multi-host rollup)."""
+    conn = db.connect()
+    try:
+        r = db.merge(conn, other)
+    except Exception as e:
+        click.echo(f"merge failed: {e}", err=True)
+        sys.exit(1)
+    finally:
+        conn.close()
+    click.echo(f"Merged {other}: {r['added']} new, {r['updated']} updated "
+               f"({r['total_source']} rows in source).")
+
+
 @cli.command(name="where")
 def where() -> None:
     """Print the index location and environment."""

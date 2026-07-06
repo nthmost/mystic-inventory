@@ -216,6 +216,47 @@ def duplicates(conn: sqlite3.Connection, limit: int = 200) -> list[list[Track]]:
     return groups
 
 
+def merge(conn: sqlite3.Connection, other_path: Path | str) -> dict:
+    """Import all rows from another crate.db into this index.
+
+    Rows are keyed by (host, path), so merging beyla's index into styx's simply
+    adds beyla's rows; re-merging an updated index refreshes matching rows in
+    place. Returns {'added', 'updated', 'total_source'}.
+    """
+    other = Path(other_path)
+    if not other.is_file():
+        raise FileNotFoundError(other)
+    cols = _COLUMNS + ["search_blob"]
+    collist = ", ".join(cols)
+    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in ("host", "path"))
+
+    conn.execute("ATTACH DATABASE ? AS src", (str(other),))
+    try:
+        source_total = conn.execute("SELECT COUNT(*) n FROM src.files").fetchone()["n"]
+        # Which (host,path) pairs already exist here — everything else is new.
+        added = conn.execute(
+            "SELECT COUNT(*) n FROM src.files s "
+            "WHERE NOT EXISTS (SELECT 1 FROM files f "
+            "WHERE f.host=s.host AND f.path=s.path)"
+        ).fetchone()["n"]
+        conn.execute(
+            f"""
+            INSERT INTO files ({collist}, first_seen, last_seen)
+            SELECT {collist}, first_seen, last_seen FROM src.files
+            WHERE true
+            ON CONFLICT(host, path) DO UPDATE SET {updates}, last_seen=unixepoch()
+            """
+        )
+        conn.commit()
+    finally:
+        conn.execute("DETACH DATABASE src")
+    return {
+        "total_source": source_total,
+        "added": added,
+        "updated": source_total - added,
+    }
+
+
 def stats(conn: sqlite3.Connection) -> dict:
     cur = conn.execute("SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM files")
     total = cur.fetchone()

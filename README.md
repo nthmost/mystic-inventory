@@ -19,8 +19,7 @@ loki, zephyr, and external drives.
   Only ever run on a file you point at, never during a bulk scan.
 
 The logic lives in the `crate` library; the CLI is a thin wrapper. A TUI
-(Textual) and eventually a desktop app are planned as additional frontends over
-the same core.
+(Textual) is planned as a second frontend over the same core.
 
 ## Install
 
@@ -68,4 +67,3 @@ fingerprint (a stable content id) but can't look up the title.
 - [ ] TUI file browser (Textual): navigate, preview, batch-identify, retag
 - [ ] Index merge across hosts (`crate merge other.db`)
 - [ ] Write-back retagging (apply an identified match to the file's tags)
-- [ ] Desktop app

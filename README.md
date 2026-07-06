@@ -43,11 +43,28 @@ crate stats                              # library overview
 crate where                              # index path + environment
 ```
 
-Scan on each host (they all write host-tagged rows):
+## Multi-host workflow
+
+Each host builds its own index (rows tagged with that host), then you roll them
+into one master index with `crate merge`:
 
 ```sh
-crate scan ~/Music --host loki           # or run natively on loki
+# on beyla (or any host): scan its music
+crate scan /media/music-archive
+
+# back on your main machine: pull that host's db and merge it in
+scp beyla:~/.local/share/crate/crate.db /tmp/beyla-crate.db
+crate merge /tmp/beyla-crate.db
 ```
+
+`merge` is keyed by (host, path): hosts never collide, and re-merging an updated
+index refreshes matching rows in place. After merging you can `find`, `stats`,
+and `dupes` across every host from one index — including byte-identical files
+that live on more than one machine.
+
+Note: `scan` needs only Python + `mutagen` (no network, no fpcalc), so deploying
+crate to a host just to index it is lightweight; `fpcalc`/AcoustID are only
+needed where you run `identify`.
 
 ## Configuration
 
@@ -64,6 +81,7 @@ fingerprint (a stable content id) but can't look up the title.
 ## Roadmap
 
 - [x] Core library + CLI: scan, find, identify, untagged, dupes, stats
+- [x] Index merge across hosts (`crate merge other.db`)
 - [ ] TUI file browser (Textual): navigate, preview, batch-identify, retag
-- [ ] Index merge across hosts (`crate merge other.db`)
 - [ ] Write-back retagging (apply an identified match to the file's tags)
+- [ ] `crate pull <host>` — one-shot remote scan + fetch + merge

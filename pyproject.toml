@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "crate"
+name = "mystic-inventory"
 version = "0.1.0"
 description = "Inventory and browse playable music across hosts and drives"
 readme = "README.md"

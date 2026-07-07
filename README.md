@@ -1,4 +1,4 @@
-# crate
+# mystic-inventory
 
 Inventory and browse the playable music files scattered across your machines and
 drives, then answer questions like:
@@ -6,9 +6,9 @@ drives, then answer questions like:
 - *"Find every Mouse on Mars song on this drive."* → `crate find mouse on mars`
 - *"What is this weird mp3 with no metadata?"* → `crate identify mystery.mp3`
 
-`crate` builds a single portable SQLite index that is **multi-host aware** — every
+It builds a single portable SQLite index that is **multi-host aware** — every
 file knows which host and volume it lives on — so one index can span this Mac,
-loki, zephyr, and external drives.
+loki, zephyr, and external drives. (The CLI command is `crate`.)
 
 ## How it works
 

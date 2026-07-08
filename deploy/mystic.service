@@ -1,0 +1,15 @@
+[Unit]
+Description=mystic-inventory web app (music/drive inventory)
+After=network.target
+
+[Service]
+User=nthmost
+Group=nthmost
+WorkingDirectory=/opt/mystic/app
+EnvironmentFile=/opt/mystic/mystic.env
+ExecStart=/opt/mystic/app/.venv/bin/gunicorn --workers 2 --timeout 120 --bind 127.0.0.1:8901 crate.web:create_app()
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

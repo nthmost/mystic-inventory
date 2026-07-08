@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}mystic{% endblock %}
+{% block body %}
+<div class="cards">
+  <div class="card"><span class="big">{{ stats.total_files }}</span>files</div>
+  <div class="card"><span class="big">{{ stats.total_bytes | humansize }}</span>total</div>
+  <div class="card"><span class="big">{{ '%.0f' | format(playtime_hours) }}h</span>playtime</div>
+  <div class="card"><span class="big">{{ stats.untagged }}</span>untagged</div>
+</div>
+
+<section>
+  <h2>Locations</h2>
+  <table class="grid">
+    <tr><th>location</th><th class="num">files</th><th class="num">size</th></tr>
+    {% for h in stats.per_host %}
+    <tr>
+      <td><a href="{{ url_for('views.location', location=h.host) }}">{{ h.host }}</a></td>
+      <td class="num">{{ h.n }}</td>
+      <td class="num">{{ h.b | humansize }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+
+<section>
+  <h2>Drives</h2>
+  {% if volumes %}
+  <table class="grid">
+    <tr><th></th><th>drive</th><th class="num">indexed</th><th>capacity</th><th>last seen</th></tr>
+    {% for v in volumes %}
+    <tr>
+      <td>{{ '●' if v.online else '○' }}</td>
+      <td><a href="{{ url_for('views.location', location=v.volume.label) }}">{{ v.volume.label }}</a>
+          <span class="muted">{{ 'online' if v.online else 'offline' }}</span></td>
+      <td class="num">{{ v.files }} · {{ v.bytes | humansize }}</td>
+      <td>{% if v.volume.capacity_bytes %}{{ v.volume.free_bytes | humansize }} free / {{ v.volume.capacity_bytes | humansize }}{% endif %}</td>
+      <td class="muted">{{ v.volume.last_host or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">No registered drives yet.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Backup coverage</h2>
+  <p>
+    <span class="ok">{{ coverage.protected }}</span> protected (≥2 copies) ·
+    <span class="warn">{{ coverage.at_risk }}</span> at&nbsp;risk (single copy) ·
+    <a href="{{ url_for('views.coverage') }}">details →</a>
+  </p>
+</section>
+{% endblock %}

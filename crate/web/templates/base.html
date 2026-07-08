@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}mystic{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <a class="brand" href="{{ url_for('views.dashboard') }}">✦ mystic</a>
+  {% if current_user %}
+  <nav>
+    <form class="search" action="{{ url_for('views.search') }}" method="get">
+      <input type="search" name="q" placeholder="find every mouse on mars…"
+             value="{{ q or '' }}" autocomplete="off">
+    </form>
+    <a href="{{ url_for('views.artists') }}">Artists</a>
+    <a href="{{ url_for('views.coverage') }}">Coverage</a>
+    <span class="who">{{ current_user }} · <a href="{{ url_for('auth.logout') }}">out</a></span>
+  </nav>
+  {% endif %}
+</header>
+<main>
+  {% block body %}{% endblock %}
+</main>
+<footer>mystic-inventory · <code>crate</code></footer>
+</body>
+</html>

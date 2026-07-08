@@ -103,6 +103,42 @@ crate at-risk     # list files that live in exactly ONE place — what you'd los
 If crate can't discover your drives (nonstandard mount point), set
 `CRATE_MOUNT_ROOTS=/path/one:/path/two`.
 
+## Centralized web app (mystic.nthmost.net)
+
+A Flask app (`crate/web/`) serves a **read-only** view over a central merged index
+on zephyr: dashboard (totals, per-location, drive online/offline, backup coverage),
+search, browse-by-location, artists, and coverage/at-risk pages.
+
+Two auth paths:
+- **Humans** sign in with **GitHub OAuth**, restricted to `MYSTIC_ALLOWED_USERS`
+  (default `nthmost`).
+- **Hosts** push their local index to `POST /api/push` with a shared Bearer token
+  (`MYSTIC_PUSH_TOKEN`) — they can't do an interactive login.
+
+### Sync: hosts push to the server
+
+```sh
+# one-time per host
+echo "https://mystic.nthmost.net" > ~/.config/crate/server
+echo "<push-token>"              > ~/.config/crate/push_token
+
+crate scan ~/Music        # (or crate volume scan …) build the local index
+crate push                # upload it; the server merges by (host,path)/(vol_id,relpath)
+```
+
+### Running the web app
+
+```sh
+pip install -e '.[web]'
+# dev (bypasses OAuth):
+MYSTIC_DEV_USER=you CRATE_DB=~/.local/share/crate/crate.db \
+  flask --app crate.web:create_app run
+# prod: gunicorn 'crate.web:create_app()' behind Apache, TLS via certbot
+```
+
+Environment: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `MYSTIC_ALLOWED_USERS`,
+`MYSTIC_PUSH_TOKEN`, `MYSTIC_SECRET_KEY`, `CRATE_DB` (path to the central index).
+
 ## Configuration
 
 | What | How |
@@ -121,7 +157,8 @@ fingerprint (a stable content id) but can't look up the title.
 - [x] Index merge across hosts (`crate merge other.db`)
 - [x] Removable volumes: offline-aware inventory, capacity/health (`crate volume …`)
 - [x] Backup coverage: `crate coverage`, `crate at-risk`
+- [x] Centralized web app + `crate push` sync (GitHub OAuth, read-only browse)
+- [ ] Deploy to mystic.nthmost.net on zephyr (DNS, systemd, Apache, TLS)
 - [ ] Move/copy planning between drives (consolidate, fill, dedup) — file ops, opt-in
 - [ ] TUI file browser (Textual): navigate, preview, batch-identify, retag
 - [ ] Write-back retagging (apply an identified match to the file's tags)
-- [ ] `crate pull <host>` — one-shot remote scan + fetch + merge

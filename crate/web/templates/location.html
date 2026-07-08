@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% from "_tracklist.html" import tracklist %}
+{% block title %}{{ location }} · mystic{% endblock %}
+{% block body %}
+<h2>{{ location }} <span class="muted">· {{ tracks|length }} files</span></h2>
+{{ tracklist(tracks) }}
+{% endblock %}

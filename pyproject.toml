@@ -18,9 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 tui = ["textual>=0.60"]
+web = ["flask>=3.0", "gunicorn>=21.2"]
 
 [project.scripts]
 crate = "crate.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["crate*"]
+
+[tool.setuptools.package-data]
+"crate.web" = ["templates/*.html", "static/*"]

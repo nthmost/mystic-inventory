@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% from "_tracklist.html" import tracklist %}
+{% block title %}coverage · mystic{% endblock %}
+{% block body %}
+<h2>Backup coverage</h2>
+<div class="cards">
+  <div class="card"><span class="big">{{ coverage.distinct_content }}</span>distinct files</div>
+  <div class="card ok"><span class="big">{{ coverage.protected }}</span>protected (≥2 copies)</div>
+  <div class="card warn"><span class="big">{{ coverage.at_risk }}</span>at risk (1 copy)</div>
+</div>
+<p class="muted">copies distribution:
+  {% for k, v in coverage.by_copies.items() %}{{ k }}×: {{ v }}{{ ', ' if not loop.last }}{% endfor %}
+</p>
+
+<h3>At risk — single copy, no backup</h3>
+{% if at_risk %}{{ tracklist(at_risk) }}{% else %}<p class="ok">Everything is backed up. 🎉</p>{% endif %}
+{% endblock %}

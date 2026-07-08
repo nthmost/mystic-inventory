@@ -427,6 +427,26 @@ def coverage(conn: sqlite3.Connection) -> dict:
     }
 
 
+def top_artists(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+    rows = conn.execute(
+        "SELECT artist, COUNT(*) n FROM files WHERE artist IS NOT NULL AND artist!='' "
+        "GROUP BY artist COLLATE NOCASE ORDER BY n DESC, artist COLLATE NOCASE LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def by_location(conn: sqlite3.Connection, location: str, *, limit: int = 500) -> list[Track]:
+    """Files at one location (a drive label or a host name)."""
+    loc = _location_expr()
+    rows = conn.execute(
+        f"SELECT * FROM files WHERE {loc}=? "
+        f"ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, track_no LIMIT ?",
+        (location, limit),
+    ).fetchall()
+    return [_row_to_track(r) for r in rows]
+
+
 def stats(conn: sqlite3.Connection) -> dict:
     loc = _location_expr()
     cur = conn.execute("SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM files")

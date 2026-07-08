@@ -13,7 +13,7 @@ from pathlib import Path
 import click
 
 from . import __version__, db, volumes
-from .config import acoustid_key, db_path, hostname
+from .config import acoustid_key, db_path, hostname, push_token, server_url
 from .fingerprint import fpcalc_available, identify as fp_identify
 from .scan import ScanResult, scan as run_scan
 
@@ -337,6 +337,44 @@ def at_risk(limit: int, paths: bool) -> None:
         click.echo(f"[{click.style(t.location, fg='cyan')}] {t.display}")
         click.echo(click.style(f"      {t.path}", fg="bright_black"))
     click.echo(err=True, message=f"\n{len(rows)} at-risk file(s) shown.")
+
+
+@cli.command()
+@click.option("--server", default=None, help="Central server URL (default: CRATE_SERVER).")
+@click.option("--token", default=None, help="Push token (default: CRATE_PUSH_TOKEN / config).")
+def push(server: str | None, token: str | None) -> None:
+    """Upload this host's index to the central mystic server, which merges it."""
+    import requests
+    server = (server or server_url() or "").rstrip("/")
+    token = token or push_token()
+    if not server:
+        click.echo("No server set (use --server or CRATE_SERVER).", err=True)
+        sys.exit(2)
+    if not token:
+        click.echo("No push token (use --token or CRATE_PUSH_TOKEN).", err=True)
+        sys.exit(2)
+    dbp = db_path()
+    if not dbp.is_file():
+        click.echo(f"No index at {dbp} — scan something first.", err=True)
+        sys.exit(1)
+    click.echo(f"Pushing {dbp} ({_human_size(dbp.stat().st_size)}) → {server} …", err=True)
+    try:
+        with open(dbp, "rb") as fh:
+            resp = requests.post(
+                f"{server}/api/push",
+                headers={"Authorization": f"Bearer {token}"},
+                files={"index": ("crate.db", fh, "application/octet-stream")},
+                timeout=300,
+            )
+    except requests.RequestException as e:
+        click.echo(f"push failed: {e}", err=True)
+        sys.exit(1)
+    if resp.status_code != 200:
+        click.echo(f"server returned {resp.status_code}: {resp.text[:200]}", err=True)
+        sys.exit(1)
+    r = resp.json()
+    click.echo(f"Pushed: {r.get('added')} new, {r.get('updated')} updated "
+               f"({r.get('total_source')} rows sent).")
 
 
 @cli.command(name="where")

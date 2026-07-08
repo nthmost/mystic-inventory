@@ -63,3 +63,37 @@ def acoustid_key() -> str | None:
         except OSError:
             continue
     return None
+
+
+def push_token() -> str | None:
+    """Shared Bearer token authorizing `crate push` to the central server.
+
+    From CRATE_PUSH_TOKEN env, else ~/.config/crate/push_token.
+    """
+    env = os.environ.get("CRATE_PUSH_TOKEN")
+    if env:
+        return env.strip()
+    f = Path.home() / ".config" / "crate" / "push_token"
+    try:
+        if f.is_file():
+            return f.read_text().strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def server_url() -> str | None:
+    """Default central server for `crate push`, e.g. https://mystic.nthmost.net.
+
+    From CRATE_SERVER env, else ~/.config/crate/server.
+    """
+    env = os.environ.get("CRATE_SERVER")
+    if env:
+        return env.strip().rstrip("/")
+    f = Path.home() / ".config" / "crate" / "server"
+    try:
+        if f.is_file():
+            return (f.read_text().strip() or "").rstrip("/") or None
+    except OSError:
+        pass
+    return None

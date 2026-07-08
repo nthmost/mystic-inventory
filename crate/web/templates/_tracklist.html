@@ -1,0 +1,14 @@
+{% macro tracklist(tracks) %}
+<table class="grid tracks">
+  <tr><th>loc</th><th>artist</th><th>title</th><th class="num">time</th><th>path</th></tr>
+  {% for t in tracks %}
+  <tr class="{{ 'untagged' if t.is_untagged }}">
+    <td><a href="{{ url_for('views.location', location=t.location) }}" class="loc">{{ t.location }}</a></td>
+    <td>{{ t.artist or '—' }}</td>
+    <td>{{ t.title or t.path.rsplit('/',1)[-1] }}</td>
+    <td class="num">{{ t.duration | dur }}</td>
+    <td class="muted path">{{ t.relpath or t.path }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endmacro %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}artists · mystic{% endblock %}
+{% block body %}
+<h2>Artists</h2>
+<div class="artistgrid">
+  {% for a in artists %}
+  <a href="{{ url_for('views.search', q=a.artist) }}" class="artist">
+    <span class="n">{{ a.n }}</span>{{ a.artist }}
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

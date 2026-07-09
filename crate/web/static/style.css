@@ -53,10 +53,50 @@ table.grid tr:hover td { background: #232030; }
 .tracks .loc { font-size: .8rem; color: var(--cyan); }
 .tracks tr.untagged td { color: var(--warn); }
 
-.artistgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .4rem; }
+.artistgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .4rem; }
 .artist { background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
-  padding: .45rem .7rem; color: var(--fg); display: flex; justify-content: space-between; }
-.artist .n { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: .6rem; }
+  padding: .45rem .7rem; color: var(--fg); display: flex; justify-content: space-between;
+  align-items: center; gap: .6rem; }
+.artist:hover { border-color: var(--accent); text-decoration: none; }
+.artist .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artist .n { color: var(--accent); font-variant-numeric: tabular-nums; font-size: .85rem; }
+
+/* prominent search */
+.herobar { display: flex; gap: .5rem; margin: .5rem 0 1.5rem; }
+.hero { max-width: 40rem; margin: 5rem auto; text-align: center; }
+.hero-search {
+  flex: 1; width: 100%; background: var(--panel); border: 1px solid var(--line);
+  color: var(--fg); font-size: 1.15rem; padding: .8rem 1rem; border-radius: 10px;
+}
+.hero-search:focus { outline: none; border-color: var(--accent); }
+.herobar button {
+  background: var(--accent); color: #17121f; border: 0; border-radius: 10px;
+  padding: 0 1.4rem; font-weight: 600; font-size: 1rem; cursor: pointer;
+}
+
+/* page head + sort controls */
+.page-head { display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: .5rem; }
+.sortbar { display: flex; gap: .3rem; align-items: center; font-size: .85rem; }
+.sortbar a { padding: .25rem .6rem; border-radius: 6px; border: 1px solid var(--line);
+  color: var(--muted); }
+.sortbar a.on { background: var(--accent); color: #17121f; border-color: var(--accent); }
+.sortbar a:hover { text-decoration: none; border-color: var(--accent); }
+
+/* grouped search results */
+.results-head { margin-top: .5rem; }
+.artist-block { margin: 1.5rem 0; }
+.artist-block > h3 { font-size: 1.05rem; margin: 0 0 .6rem; border-bottom: 1px solid var(--line);
+  padding-bottom: .3rem; }
+.albumgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .7rem; }
+.albumcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: .8rem .9rem; display: flex; flex-direction: column; gap: .3rem; color: var(--fg); }
+.albumcard:hover { border-color: var(--accent); text-decoration: none; transform: translateY(-1px); }
+.album-title { font-weight: 600; }
+.album-meta { color: var(--muted); font-size: .82rem; }
+.album-locs { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .2rem; }
+.album-locs .loc { background: #2a2740; color: var(--cyan); font-size: .72rem;
+  padding: .1rem .45rem; border-radius: 999px; }
 
 .login { max-width: 24rem; margin: 6rem auto; text-align: center; }
 .login h1 { font-size: 2rem; }

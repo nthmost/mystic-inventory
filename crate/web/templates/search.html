@@ -2,10 +2,44 @@
 {% from "_tracklist.html" import tracklist %}
 {% block title %}{{ q or 'search' }} · mystic{% endblock %}
 {% block body %}
-{% if q %}
-  <h2>{{ results|length }} result{{ '' if results|length == 1 else 's' }} for “{{ q }}”</h2>
-  {% if results %}{{ tracklist(results) }}{% else %}<p class="muted">Nothing found.</p>{% endif %}
+{% if not q %}
+  <div class="hero">
+    <form action="{{ url_for('views.search') }}" method="get">
+      <input class="hero-search" type="search" name="q" autofocus autocomplete="off"
+             placeholder="artist, album, song, or drive…">
+    </form>
+    <p class="muted">Try <a href="{{ url_for('views.search', q='deltron') }}">deltron</a>,
+      <a href="{{ url_for('views.search', q='radiohead') }}">radiohead</a>,
+      or a drive name.</p>
+  </div>
 {% else %}
-  <p class="muted">Type a query above — matches artist, album, title, drive, and path.</p>
+  <h2 class="results-head">
+    {{ total }} track{{ '' if total == 1 else 's' }} for “{{ q }}”
+    {% if albums %}<span class="muted">· {{ albums|length }} album{{ '' if albums|length == 1 else 's' }}</span>{% endif %}
+  </h2>
+
+  {% for artist, group in albums|groupby('artist') %}
+  <section class="artist-block">
+    <h3><a href="{{ url_for('views.search', q=artist) }}">{{ artist or 'Unknown artist' }}</a></h3>
+    <div class="albumgrid">
+      {% for a in group %}
+      <a class="albumcard" href="{{ url_for('views.album', artist=a.artist, album=a.album) }}">
+        <span class="album-title">{{ a.album }}</span>
+        <span class="album-meta">{% if a.year %}{{ a.year }} · {% endif %}{{ a.tracks }} tracks · {{ a.duration | dur }}</span>
+        <span class="album-locs">{% for l in a.locations %}<span class="loc">{{ l }}</span>{% endfor %}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+
+  {% if loose %}
+  <section>
+    <h3>Loose tracks <span class="muted">(no album tag)</span></h3>
+    {{ tracklist(loose) }}
+  </section>
+  {% endif %}
+
+  {% if not albums and not loose %}<p class="muted">Nothing found for “{{ q }}”.</p>{% endif %}
 {% endif %}
 {% endblock %}

@@ -71,8 +71,22 @@ def dashboard():
 @login_required
 def search():
     q = request.args.get("q", "").strip()
-    results = db.search(get_conn(), q, limit=300) if q else []
-    return render_template("search.html", q=q, results=results)
+    albums, loose, total = [], [], 0
+    if q:
+        conn = get_conn()
+        albums = db.search_albums(conn, q, limit=400)
+        loose = db.loose_matches(conn, q, limit=100)
+        total = sum(a["tracks"] for a in albums) + len(loose)
+    return render_template("search.html", q=q, albums=albums, loose=loose, total=total)
+
+
+@bp.route("/album")
+@login_required
+def album():
+    artist = request.args.get("artist", "")
+    name = request.args.get("album", "")
+    tracks = db.album_tracks(get_conn(), artist, name, limit=500)
+    return render_template("album.html", artist=artist, album=name, tracks=tracks)
 
 
 @bp.route("/location/<path:location>")
@@ -82,10 +96,23 @@ def location(location):
     return render_template("location.html", location=location, tracks=tracks)
 
 
+ARTIST_SORT_LABELS = [
+    ("count_desc", "Most → fewest"),
+    ("count_asc", "Fewest → most"),
+    ("az", "A → Z"),
+    ("za", "Z → A"),
+]
+
+
 @bp.route("/artists")
 @login_required
 def artists():
-    return render_template("artists.html", artists=db.top_artists(get_conn(), 300))
+    sort = request.args.get("sort", "count_desc")
+    if sort not in db.ARTIST_SORTS:
+        sort = "count_desc"
+    return render_template("artists.html",
+                           artists=db.top_artists(get_conn(), sort=sort, limit=1000),
+                           sort=sort, sort_options=ARTIST_SORT_LABELS)
 
 
 @bp.route("/coverage")

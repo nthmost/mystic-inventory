@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% from "_tracklist.html" import tracklist %}
+{% block title %}{{ album }} · {{ artist }} · mystic{% endblock %}
+{% block body %}
+<h2>{{ album or 'Untitled album' }}</h2>
+<p class="muted"><a href="{{ url_for('views.search', q=artist) }}">{{ artist or 'Unknown artist' }}</a>
+  · {{ tracks|length }} tracks</p>
+{{ tracklist(tracks) }}
+{% endblock %}

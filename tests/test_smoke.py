@@ -60,6 +60,34 @@ class TestIndex(unittest.TestCase):
         self.assertEqual(len(u), 1)
         self.assertTrue(u[0].is_untagged)
 
+    def test_search_albums_groups_by_album(self):
+        for i in range(1, 4):
+            db.upsert(self.conn, self._track(
+                path=f"/m/d{i}.flac", artist="Deltron 3030",
+                album="Deltron 3030", title=f"t{i}", track_no=i, duration=100))
+        db.upsert(self.conn, self._track(
+            path="/m/e1.flac", artist="Deltron 3030", album="Event 2",
+            title="one", duration=200))
+        self.conn.commit()
+        albums = db.search_albums(self.conn, "deltron")
+        by = {a["album"]: a for a in albums}
+        self.assertEqual(set(by), {"Deltron 3030", "Event 2"})
+        self.assertEqual(by["Deltron 3030"]["tracks"], 3)
+        self.assertEqual(by["Deltron 3030"]["duration"], 300)
+        tr = db.album_tracks(self.conn, "Deltron 3030", "Deltron 3030")
+        self.assertEqual([t.track_no for t in tr], [1, 2, 3])
+
+    def test_top_artists_sort_orders(self):
+        db.upsert(self.conn, self._track(path="/m/a1", artist="Aaa", title="x"))
+        db.upsert(self.conn, self._track(path="/m/z1", artist="Zzz", title="x"))
+        db.upsert(self.conn, self._track(path="/m/z2", artist="Zzz", title="y"))
+        self.conn.commit()
+        self.assertEqual(db.top_artists(self.conn, sort="az")[0]["artist"], "Aaa")
+        self.assertEqual(db.top_artists(self.conn, sort="za")[0]["artist"], "Zzz")
+        most = db.top_artists(self.conn, sort="count_desc")[0]
+        self.assertEqual((most["artist"], most["n"]), ("Zzz", 2))
+        self.assertEqual(db.top_artists(self.conn, sort="count_asc")[0]["n"], 1)
+
     def test_merge_combines_hosts(self):
         # styx-side index (self.conn) has one styx track.
         db.upsert(self.conn, self._track(

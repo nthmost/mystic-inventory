@@ -177,6 +177,22 @@ def _row_to_track(row: sqlite3.Row) -> Track:
     return Track(**data)
 
 
+def _term_clause(query: str, *, host: str | None = None) -> tuple[str, list]:
+    """Build the AND-of-LIKE WHERE clause shared by search/search_albums.
+
+    'mouse on mars' -> every token must appear in search_blob.
+    """
+    where, params = [], []
+    for term in query.lower().split():
+        if term:
+            where.append("search_blob LIKE ?")
+            params.append(f"%{term}%")
+    if host:
+        where.append("host = ?")
+        params.append(host)
+    return (" AND ".join(where) if where else "1=1"), params
+
+
 def search(
     conn: sqlite3.Connection,
     query: str,
@@ -184,26 +200,68 @@ def search(
     host: str | None = None,
     limit: int = 200,
 ) -> list[Track]:
-    """Multi-term AND search across artist/album/title/path (case-insensitive).
-
-    'mouse on mars' matches rows whose search_blob contains all three tokens.
-    """
-    terms = [t for t in query.lower().split() if t]
-    where = []
-    params: list = []
-    for term in terms:
-        where.append("search_blob LIKE ?")
-        params.append(f"%{term}%")
-    if host:
-        where.append("host = ?")
-        params.append(host)
-    clause = " AND ".join(where) if where else "1=1"
+    """Multi-term AND search across artist/album/title/path (case-insensitive)."""
+    clause, params = _term_clause(query, host=host)
     params.append(limit)
     rows = conn.execute(
         f"SELECT * FROM files WHERE {clause} "
         f"ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, "
         f"track_no, title COLLATE NOCASE LIMIT ?",
         params,
+    ).fetchall()
+    return [_row_to_track(r) for r in rows]
+
+
+def search_albums(conn: sqlite3.Connection, query: str, *, limit: int = 200) -> list[dict]:
+    """Album-level view of a search: one row per (artist, album) that matches.
+
+    'Deltron' -> the Deltron 3030 albums, each with track count, runtime, year,
+    and which locations hold it. Tracks with no album tag are excluded here
+    (see `search` / loose_matches for those).
+    """
+    clause, params = _term_clause(query)
+    loc = _location_expr()
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT artist, album, MAX(year) AS year, COUNT(*) AS tracks,
+               COALESCE(SUM(duration),0) AS duration,
+               GROUP_CONCAT(DISTINCT {loc}) AS locations
+        FROM files
+        WHERE ({clause}) AND album IS NOT NULL AND album != ''
+        GROUP BY artist COLLATE NOCASE, album COLLATE NOCASE
+        ORDER BY artist COLLATE NOCASE, year, album COLLATE NOCASE
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["locations"] = sorted(set((d.get("locations") or "").split(",")))
+        out.append(d)
+    return out
+
+
+def loose_matches(conn: sqlite3.Connection, query: str, *, limit: int = 100) -> list[Track]:
+    """Matching tracks that have NO album tag — singles, mystery files, etc."""
+    clause, params = _term_clause(query)
+    params.append(limit)
+    rows = conn.execute(
+        f"SELECT * FROM files WHERE ({clause}) AND (album IS NULL OR album='') "
+        f"ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE LIMIT ?",
+        params,
+    ).fetchall()
+    return [_row_to_track(r) for r in rows]
+
+
+def album_tracks(conn: sqlite3.Connection, artist: str, album: str,
+                 *, limit: int = 500) -> list[Track]:
+    """Every track of one album (across all locations), in track order."""
+    rows = conn.execute(
+        "SELECT * FROM files WHERE artist=? COLLATE NOCASE AND album=? COLLATE NOCASE "
+        "ORDER BY disc_no, track_no, title COLLATE NOCASE LIMIT ?",
+        (artist, album, limit),
     ).fetchall()
     return [_row_to_track(r) for r in rows]
 
@@ -427,10 +485,20 @@ def coverage(conn: sqlite3.Connection) -> dict:
     }
 
 
-def top_artists(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+ARTIST_SORTS = {
+    "az":         "artist COLLATE NOCASE ASC",
+    "za":         "artist COLLATE NOCASE DESC",
+    "count_desc": "n DESC, artist COLLATE NOCASE ASC",
+    "count_asc":  "n ASC, artist COLLATE NOCASE ASC",
+}
+
+
+def top_artists(conn: sqlite3.Connection, *, sort: str = "count_desc",
+                limit: int = 500) -> list[dict]:
+    order = ARTIST_SORTS.get(sort, ARTIST_SORTS["count_desc"])
     rows = conn.execute(
-        "SELECT artist, COUNT(*) n FROM files WHERE artist IS NOT NULL AND artist!='' "
-        "GROUP BY artist COLLATE NOCASE ORDER BY n DESC, artist COLLATE NOCASE LIMIT ?",
+        f"SELECT artist, COUNT(*) n FROM files WHERE artist IS NOT NULL AND artist!='' "
+        f"GROUP BY artist COLLATE NOCASE ORDER BY {order} LIMIT ?",
         (limit,),
     ).fetchall()
     return [dict(r) for r in rows]

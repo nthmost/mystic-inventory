@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}mystic{% endblock %}
 {% block body %}
+<form class="herobar" action="{{ url_for('views.search') }}" method="get">
+  <input class="hero-search" type="search" name="q" autocomplete="off"
+         placeholder="Search everything — artist, album, song, drive…">
+  <button type="submit">Search</button>
+</form>
 <div class="cards">
   <div class="card"><span class="big">{{ stats.total_files }}</span>files</div>
   <div class="card"><span class="big">{{ stats.total_bytes | humansize }}</span>total</div>

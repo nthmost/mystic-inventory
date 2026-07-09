@@ -1,11 +1,19 @@
 {% extends "base.html" %}
 {% block title %}artists · mystic{% endblock %}
 {% block body %}
-<h2>Artists</h2>
+<div class="page-head">
+  <h2>Artists <span class="muted">· {{ artists|length }}</span></h2>
+  <div class="sortbar">
+    <span class="muted">sort</span>
+    {% for key, label in sort_options %}
+    <a class="{{ 'on' if key == sort }}" href="{{ url_for('views.artists', sort=key) }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+</div>
 <div class="artistgrid">
   {% for a in artists %}
   <a href="{{ url_for('views.search', q=a.artist) }}" class="artist">
-    <span class="n">{{ a.n }}</span>{{ a.artist }}
+    <span class="name">{{ a.artist }}</span><span class="n">{{ a.n }}</span>
   </a>
   {% endfor %}
 </div>

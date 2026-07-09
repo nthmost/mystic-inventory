@@ -77,6 +77,18 @@ class TestIndex(unittest.TestCase):
         tr = db.album_tracks(self.conn, "Deltron 3030", "Deltron 3030")
         self.assertEqual([t.track_no for t in tr], [1, 2, 3])
 
+    def test_accent_insensitive_search(self):
+        db.upsert(self.conn, self._track(
+            path="/m/d.flac", artist="Huartan", album="Huartan", title="Dúlamán"))
+        db.upsert(self.conn, self._track(
+            path="/m/j.flac", artist="José González", title="Heartbeats"))
+        self.conn.commit()
+        self.assertEqual(len(db.search(self.conn, "dulaman")), 1)      # unaccented query
+        self.assertEqual(len(db.search(self.conn, "Dúlamán")), 1)      # accented query
+        self.assertEqual(db.search(self.conn, "jose gonzalez")[0].artist, "José González")
+        self.assertEqual(db.fold("Mötörhead"), "motorhead")
+        self.assertEqual(db.fold("Bjørk"), "bjork")
+
     def test_top_artists_sort_orders(self):
         db.upsert(self.conn, self._track(path="/m/a1", artist="Aaa", title="x"))
         db.upsert(self.conn, self._track(path="/m/z1", artist="Zzz", title="x"))

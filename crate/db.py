@@ -8,10 +8,31 @@ on multiple drives yields multiple rows related by content_hash / acoustid.
 from __future__ import annotations
 
 import sqlite3
+import unicodedata
 from pathlib import Path
 from typing import Iterable, Iterator
 
 from .config import db_path
+
+# Latin letters that don't decompose under NFKD but should still fold to ASCII.
+_FOLD_MAP = str.maketrans({
+    "ø": "o", "Ø": "o", "ł": "l", "Ł": "l", "æ": "ae", "Æ": "ae",
+    "œ": "oe", "Œ": "oe", "đ": "d", "Đ": "d", "ð": "d", "Ð": "d",
+    "þ": "th", "Þ": "th", "ı": "i", "ß": "ss", "ħ": "h", "ĸ": "k",
+})
+
+
+def fold(s: str | None) -> str:
+    """Lowercase + strip diacritics so 'Dúlamán' folds to 'dulaman'.
+
+    Used for accent-insensitive search: both the stored search text and the
+    query terms are folded through here before matching.
+    """
+    if not s:
+        return ""
+    s = s.translate(_FOLD_MAP)
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
 from .models import Track, Volume
 
 SCHEMA_VERSION = 2
@@ -66,6 +87,8 @@ CREATE TABLE IF NOT EXISTS files (
     tags_json TEXT,
     -- lowercased 'artist album title path' blob for cheap multi-term search
     search_blob TEXT,
+    -- search_blob with diacritics stripped, so 'dulaman' matches 'Dúlamán'
+    search_fold TEXT,
     first_seen REAL DEFAULT (unixepoch()),
     last_seen REAL DEFAULT (unixepoch()),
     UNIQUE(host, path)
@@ -98,6 +121,7 @@ _MIGRATIONS = {
     "vol_id": "ALTER TABLE files ADD COLUMN vol_id TEXT",
     "relpath": "ALTER TABLE files ADD COLUMN relpath TEXT",
     "vol_label": "ALTER TABLE files ADD COLUMN vol_label TEXT",
+    "search_fold": "ALTER TABLE files ADD COLUMN search_fold TEXT",
 }
 
 # Indexes referencing columns that may be added by migration — created only
@@ -118,9 +142,19 @@ def _search_blob(t: Track) -> str:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     have = {r["name"] for r in conn.execute("PRAGMA table_info(files)")}
+    added = set()
     for col, ddl in _MIGRATIONS.items():
         if col not in have:
             conn.execute(ddl)
+            added.add(col)
+    # One-time backfill of folded search text when the column is first added
+    # (afterwards, upsert keeps it current, so no per-open scan is needed).
+    if "search_fold" in added:
+        conn.create_function("crate_fold", 1, fold, deterministic=True)
+        conn.execute(
+            "UPDATE files SET search_fold = crate_fold(search_blob) "
+            "WHERE search_blob IS NOT NULL"
+        )
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -150,7 +184,8 @@ def upsert(conn: sqlite3.Connection, track: Track) -> None:
     """
     row = track.as_row()
     row["search_blob"] = _search_blob(track)
-    cols = _COLUMNS + ["search_blob"]
+    row["search_fold"] = fold(row["search_blob"])
+    cols = _COLUMNS + ["search_blob", "search_fold"]
     placeholders = ", ".join(f":{c}" for c in cols)
     collist = ", ".join(cols)
     if track.vol_id:
@@ -183,10 +218,11 @@ def _term_clause(query: str, *, host: str | None = None) -> tuple[str, list]:
     'mouse on mars' -> every token must appear in search_blob.
     """
     where, params = [], []
-    for term in query.lower().split():
-        if term:
-            where.append("search_blob LIKE ?")
-            params.append(f"%{term}%")
+    for term in query.split():
+        folded = fold(term)
+        if folded:
+            where.append("search_fold LIKE ?")
+            params.append(f"%{folded}%")
     if host:
         where.append("host = ?")
         params.append(host)
@@ -302,6 +338,12 @@ def update_identification(
         """,
         (fingerprint, acoustid, mb_recording_id, title, artist, album,
          artist, album, title, track_id),
+    )
+    # Keep the folded search text in sync with the rebuilt blob.
+    conn.create_function("crate_fold", 1, fold, deterministic=True)
+    conn.execute(
+        "UPDATE files SET search_fold = crate_fold(search_blob) WHERE id = ?",
+        (track_id,),
     )
     conn.commit()
 
